@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>モールスID通信機 - Ver.18(本格円形金庫ダイヤル回転仕様)</title>
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <style>
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            background: #0d1117;
+            color: #58a6ff;
+            padding: 20px;
+            margin: 0;
+            display: grid;
+            grid-template-columns: 320px 1fr 0px;
+            grid-template-rows: auto 1fr;
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+            user-select: none;
+            -webkit-user-select: none;
+            transition: grid-template-columns 0.4s ease;
+        }
+        
+        body.admin-layout {
+            grid-template-columns: 320px 1fr 400px;
+        }
+        
+        .left-column {
+            grid-column: 1;
+            grid-row: 1 / 3;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .main-panel {
+            grid-column: 2;
+            grid-row: 2;
+            background: #161b22;
+            padding: 25px;
+            border-radius: 10px;
+            border: 2px solid #30363d;
+            text-align: center;
+        }
+
+        .rx-box {
+            grid-column: 2;
+            grid-row: 1;
+            background: #0d1117;
+            border: 2px dashed #30363d;
+            border-radius: 10px;
+            padding: 15px;
+            min-height: 80px;
+            position: relative;
+            transition: 0.3s;
+        }
+        .rx-box.receiving { border-color: #50fa7b; box-shadow: 0 0 15px rgba(80, 250, 123, 0.2); }
+        .rx-box.admin-intercept { border-color: #ff3366; box-shadow: 0 0 20px rgba(255, 51, 102, 0.3); }
+        
+        .rx-title {
+            position: absolute;
+            top: -10px; left: 15px;
+            background: #0d1117; padding: 0 5px;
+            color: #8b949e; font-size: 12px; font-weight: bold;
+        }
+        #rxMessage { font-size: 24px; color: #fff; font-weight: bold; margin-top: 10px; letter-spacing: 2px; }
+        #rxRawMorse { font-size: 14px; color: #8b949e; margin-top: 5px; }
+
+        .admin-panel {
+            grid-column: 3;
+            grid-row: 1 / 3;
+            background: #161b22;
+            border: 2px solid #ff3366;
+            border-radius: 10px;
+            padding: 15px;
+            display: none;
+            flex-direction: column;
+            box-shadow: 0 0 20px rgba(255, 51, 102, 0.15);
+            overflow: hidden;
+        }
+        .admin-panel.show { display: flex; }
+        .admin-table-wrapper {
+            flex: 1;
+            overflow-y: auto;
+            margin-top: 10px;
+            border: 1px solid #30363d;
+            background: #0d1117;
+            border-radius: 5px;
+        }
+        .admin-table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
+        .admin-table th { background: #21262d; color: #ff3366; padding: 8px; position: sticky; top: 0; border-bottom: 2px solid #30363d; }
+        .admin-table td { padding: 8px; border-bottom: 1px solid #21262d; color: #c9d1d9; word-break: break-all; }
+        .admin-table tr:hover { background: rgba(255, 51, 102, 0.05); }
+        .tag-route { background: #ff3366; color: #fff; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 11px; letter-spacing: 1px; }
+
+        .box { background: #161b22; padding: 15px; border-radius: 10px; border: 2px solid #30363d; }
+        h3 { color: #58a6ff; font-size: 14px; margin-top: 0; border-bottom: 1px solid #30363d; padding-bottom: 5px; }
+        
+        .scroll-table { max-height: 180px; overflow-y: auto; font-size: 12px; }
+        .morse-table { width: 100%; border-collapse: collapse; }
+        .morse-table td { padding: 3px 5px; color: #8b949e; }
+        .morse-table .char { color: #ff79c6; font-weight: bold; width: 20px; }
+        .morse-table .code { color: #50fa7b; font-size: 13px; letter-spacing: 1px; }
+
+        .mini-dial-container { display: flex; justify-content: center; gap: 8px; margin: 10px 0; }
+        
+        .dial-container { display: flex; justify-content: center; gap: 15px; margin: 25px 0; flex-wrap: wrap; }
+        .dial-wrapper { display: flex; flex-direction: column; align-items: center; }
+        .dial-label { font-size: 11px; color: #8b949e; margin-bottom: 5px; }
+        
+        /* 本格金庫風ロータリーダイヤル構造 */
+        .rotary-dial {
+            width: 65px; height: 65px; border-radius: 50%;
+            background: radial-gradient(circle, #21262d 40%, #30363d 45%, #161b22 70%, #8b949e 75%, #0d1117 100%);
+            border: 2px solid #30363d; cursor: pointer; position: relative; touch-action: none;
+            will-change: transform; transform: rotate(0deg);
+        }
+        /* つまみ線（インジケーター） */
+        .rotary-dial::before {
+            content: ''; position: absolute; top: 4px; left: 50%; width: 3px; height: 10px; background: #8b949e; transform: translateX(-50%); transition: background 0.2s;
+        }
+        .rotary-dial.focused { border-color: #58a6ff; box-shadow: 0 0 12px rgba(88, 166, 255, 0.6); }
+        .rotary-dial.focused::before { background: #58a6ff; }
+        
+        /* 数値表示パーツ（ダイヤルの真ん中に固定され、一緒に回転しない） */
+        .dial-value-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;
+        }
+        .dial-value { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 22px; font-weight: bold; color: #ff79c6; }
+        
+        .rotary-dial.matched { border-color: #ffaa00; box-shadow: 0 0 15px rgba(255,170,0,0.3); }
+        .rotary-dial.matched .dial-value { color: #ffaa00; text-shadow: 0 0 8px #ffaa00; }
+        .rotary-dial.matched::before { background: #ffaa00; }
+        
+        .rotary-dial.admin-matched { border-color: #ff3366; box-shadow: 0 0 20px rgba(255,51,102,0.5); }
+        .rotary-dial.admin-matched .dial-value { color: #ff3366; text-shadow: 0 0 10px #ff3366; }
+        .rotary-dial.admin-matched::before { background: #ff3366; }
+
+        /* マイID用の小型金庫ダイヤル */
+        .rotary-dial.mini { width: 50px; height: 50px; background: radial-gradient(circle, #161b22 40%, #21262d 45%, #0d1117 70%, #00ffcc 75%, #0d1117 100%); border-color: #00ffcc; }
+        .rotary-dial.mini::before { height: 8px; background: #00ffcc; top: 3px; }
+        .rotary-dial.mini .dial-value { font-size: 18px; color: #00ffcc; text-shadow: 0 0 6px rgba(0,255,204,0.3); }
+        .rotary-dial.mini.admin-mode { border-color: #ff3366; background: radial-gradient(circle, #161b22 40%, #21262d 45%, #0d1117 70%, #ff3366 75%, #0d1117 100%); }
+        .rotary-dial.mini.admin-mode::before { background: #ff3366; }
+        .rotary-dial.mini.admin-mode .dial-value { color: #ff3366; text-shadow: 0 0 10px #ff3366; }
+
+        .key-pad { margin: 15px auto; width: 70%; padding: 20px; background: #21262d; border: 2px solid #30363d; border-radius: 10px; font-size: 18px; color: #8b949e; transition: 0.1s; }
+        .key-pad.active { background: #ff79c6; color: #fff; box-shadow: 0 0 20px #ff79c6; }
+        .key-pad.disabled { background: #222 !important; color: #444 !important; border-color: #333 !important; box-shadow: none !important; cursor: not-allowed; }
+
+        #signalStream { background: #0d1117; padding: 10px; border-radius: 5px; border: 1px solid #30363d; min-height: 35px; font-size: 20px; color: #ff79c6; letter-spacing: 2px; word-break: break-all; margin: 10px 0; text-align: left; }
+        #signalStream.disabled { background: #141414; color: #444; }
+        
+        .btn-send { font-size: 18px; padding: 10px 30px; cursor: pointer; background: #ff79c6; border: none; color: #fff; font-weight: bold; border-radius: 5px; }
+        .btn-send:hover { background: #ff92df; }
+        .btn-send:disabled { background: #30363d !important; color: #8b949e !important; cursor: not-allowed; box-shadow: none; }
+        .btn-clear { background: #30363d; color: #8b949e; font-size: 12px; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; margin-left: 10px;}
+
+        #statusLog { color: #ff5555; font-size: 14px; margin-top: 5px; font-weight: bold; }
+
+        .text-conv-input {
+            width: 100%; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d;
+            color: #fff; padding: 8px; border-radius: 5px; font-family: monospace; font-size: 13px; margin-bottom: 10px; resize: vertical;
+        }
+        .btn-conv {
+            width: 100%; padding: 8px; background: #58a6ff; border: none; color: #fff;
+            font-weight: bold; border-radius: 5px; cursor: pointer; font-size: 12px;
+        }
+        .btn-conv:hover { background: #79b7ff; }
+
+        .stun-control {
+            display: flex; align-items: center; justify-content: space-between; margin-top: 10px; background: #0d1117; padding: 8px; border-radius: 5px; border: 1px solid #30363d;
+        }
+        .switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #30363d; transition: .3s; border-radius: 22px; }
+        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: #8b949e; transition: .3s; border-radius: 50%; }
+        input:checked + .slider { background-color: #50fa7b; }
+        input:checked + .slider:before { transform: translateX(18px); background-color: #0d1117; }
+        .stun-label { font-size: 12px; color: #c9d1d9; font-weight: bold; }
+
+        @media (max-width: 1024px) {
+            body.admin-layout { display: flex; flex-direction: column; }
+            .admin-panel { max-height: 400px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="left-column">
+    <div class="box">
+        <h3>[ モールス符号一覧 ]</h3>
+        <div class="scroll-table">
+            <table class="morse-table" id="morseHelpTable"></table>
+        </div>
+    </div>
+
+    <div class="box">
+        <h3>[ あなたのマイID (ダイヤル回転) ]</h3>
+        <p style="font-size: 11px; color: #8b949e; margin: 0 0 5px 0;">金庫のつまみ線を掴んで円を描くように回してください</p>
+        
+        <div class="mini-dial-container">
+            <div class="rotary-dial mini" id="myDial0" onclick="selectMyDial(0)"><div class="dial-value-container"><div class="dial-value">5</div></div></div>
+            <div class="rotary-dial mini" id="myDial1" onclick="selectMyDial(1)"><div class="dial-value-container"><div class="dial-value">5</div></div></div>
+            <div class="rotary-dial mini" id="myDial2" onclick="selectMyDial(2)"><div class="dial-value-container"><div class="dial-value">5</div></div></div>
+            <div class="rotary-dial mini" id="myDial3" onclick="selectMyDial(3)"><div class="dial-value-container"><div class="dial-value">5</div></div></div>
+            <div class="rotary-dial mini" id="myDial4" onclick="selectMyDial(4)"><div class="dial-value-container"><div class="dial-value">5</div></div></div>
+        </div>
+        
+        <div class="stun-control">
+            <span class="stun-label" id="stunStatusLabel">STUNサーバー: ON</span>
+            <label class="switch">
+                <input type="checkbox" id="stunToggle" checked onchange="toggleStunServer()">
+                <span class="slider"></span>
+            </label>
+        </div>
+    </div>
+
+    <div class="box" id="textConverterBox">
+        <h3>[ テキスト送信変換 ]</h3>
+        <p style="font-size: 11px; color: #8b949e; margin: 0 0 8px 0;">英文/数字は符号化、顔文字・絵文字はそのままバッファへ</p>
+        <textarea id="textInput" class="text-conv-input" rows="2" placeholder="HELLO (^-^)/ 123 😊"></textarea>
+        <button class="btn-conv" onclick="convertTextToMorse()">符号変換してバッファへ送出</button>
+    </div>
+</div>
+
+<div class="rx-box" id="rxBox">
+    <div class="rx-title" id="rxTitle">[受信モニター - RECEIVER]</div>
+    <div id="rxStatus" style="font-size: 12px; color: #8b949e;">ネットワーク接続中...</div>
+    <div id="rxMessage">---</div>
+    <div id="rxRawMorse"></div>
+</div>
+
+<div class="admin-panel" id="adminPanel">
+    <h3 style="color: #ff3366; border-color: #ff3366;">⚡ [ リアルタイム通信傍受ログ ]</h3>
+    <p style="font-size: 11px; color: #8b949e; margin: 5px 0 0 0;">ネットワーク全体の交信を検知・記録中...</p>
+    <div class="admin-table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th style="width: 130px;">通信経路 (ROUTE)</th>
+                    <th>解読内容 (DATA)</th>
+                </tr>
+            </thead>
+            <tbody id="adminLogBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="main-panel">
+    <h3 style="border:none; font-size: 16px; margin-bottom: 0;">[ ROTARY DIAL TRANSMITTER ]</h3>
+    <p style="font-size: 12px; color: #8b949e; margin-top: 5px;">1. 目盛り線をホールドし、金庫ロックを解除するように円を描いて【相手のID】へ回す</p>
+    
+    <div class="dial-container">
+        <div class="dial-wrapper"><div class="dial-label">1桁目</div><div class="rotary-dial" id="dial0" onclick="selectTargetDial(0)"><div class="dial-value-container"><div class="dial-value">1</div></div></div></div>
+        <div class="dial-wrapper"><div class="dial-label">2桁目</div><div class="rotary-dial" id="dial1" onclick="selectTargetDial(1)"><div class="dial-value-container"><div class="dial-value">1</div></div></div></div>
+        <div class="dial-wrapper"><div class="dial-label">3桁目</div><div class="rotary-dial" id="dial2" onclick="selectTargetDial(2)"><div class="dial-value-container"><div class="dial-value">1</div></div></div></div>
+        <div class="dial-wrapper"><div class="dial-label">4桁目</div><div class="rotary-dial" id="dial3" onclick="selectTargetDial(3)"><div class="dial-value-container"><div class="dial-value">1</div></div></div></div>
+        <div class="dial-wrapper"><div class="dial-label">5桁目</div><div class="rotary-dial" id="dial4" onclick="selectTargetDial(4)"><div class="dial-value-container"><div class="dial-value">1</div></div></div></div>
+    </div>
+
+    <div id="statusLog">> ダイヤルを回して相手に同調させてください...</div>
+
+    <p style="font-size: 12px; color: #8b949e; margin-top: 20px; margin-bottom: 5px;">2. 【ENTERキー】で符号を入力</p>
+    <div id="keyPad" class="key-pad">ENTER KEY (電鍵)</div>
+
+    <div style="font-size: 12px; color: #8b949e; text-align: left;">[ 送信バッファ ] <button class="btn-clear" onclick="clearBuffer()">クリア</button></div>
+    <div id="signalStream"></div>
+
+    <button class="btn-send" id="btnSend" onclick="transmitMessage()">更新送信 (UPDATE)</button>
+</div>
+
+<script>
+const MORSE_MAP = {
+    'A': '.-', 'B': '-...', 'C': '-.-.', 'D': '-..', 'E': '.', 'F': '..-.', 'G': '--.', 'H': '....',
+    'I': '..', 'J': '.---', 'K': '-.-', 'L': '.-..', 'M': '--', 'N': '-.', 'O': '---', 'P': '.--.',
+    'Q': '--.-', 'R': '.-.', 'S': '...', 'T': '-', 'U': '..-', 'V': '...-', 'W': '.--', 'X': '-..-',
+    'Y': '-.--', 'Z': '--..', '1': '.----', '2': '..---', '3': '...--', '4': '....-', '5': '.....',
+    '6': '-....', '7': '--...', '8': '---..', '9': '----.', '0': '-----'
+};
+const REVERSE_MORSE_MAP = {};
+for (let key in MORSE_MAP) { REVERSE_MORSE_MAP[MORSE_MAP[key]] = key; }
+
+const table = document.getElementById('morseHelpTable');
+const keys = Object.keys(MORSE_MAP);
+for(let i=0; i<keys.length; i+=2) {
+    let tr = document.createElement('tr');
+    tr.innerHTML = `<td class="char">${keys[i]}</td><td class="code">${MORSE_MAP[keys[i]]}</td>`;
+    if(keys[i+1]) { tr.innerHTML += `<td class="char">${keys[i+1]}</td><td class="code">${MORSE_MAP[keys[i+1]]}</td>`; }
+    table.appendChild(tr);
+}
+
+const VirtualAuthServer = (() => {
+    const _dbKey = "20110614"; 
+    return {
+        postAuthRequest: async (inputPassword) => {
+            await new Promise(resolve => setTimeout(resolve, 300));
+            if (inputPassword === _dbKey) return { status: 200, message: "Access Granted", role: "admin" };
+            return { status: 403, message: "Invalid Admin Credentials", role: null };
+        }
+    };
+})();
+
+const urlParams = new URLSearchParams(window.location.search);
+let isAdmin = false;
+
+let myValues = [
+    String(Math.floor(Math.random() * 10)),
+    String(Math.floor(Math.random() * 10)),
+    String(Math.floor(Math.random() * 10)),
+    String(Math.floor(Math.random() * 10)),
+    String(Math.floor(Math.random() * 10))
+];
+function getMyIDString() { return isAdmin ? "OoOoO" : myValues.join(''); }
+
+let peer = null;
+let isStunEnabled = true;
+
+// 初期マイID表示
+for(let i=0; i<5; i++) {
+    document.getElementById(`myDial${i}`).querySelector('.dial-value').innerText = myValues[i];
+}
+
+(async () => {
+    const authCode = urlParams.get('auth');
+    if (authCode) {
+        const response = await VirtualAuthServer.postAuthRequest(authCode);
+        if (response.status === 200) triggerAdminActivation();
+    }
+    initPeerConnection();
+})();
+
+function initPeerConnection() {
+    if (peer) { peer.destroy(); }
+    const currentMyID = getMyIDString();
+    const config = isStunEnabled 
+        ? { config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] } }
+        : { config: { iceServers: [] } };
+
+    peer = new Peer(`morse-id-${currentMyID}`, config);
+
+    peer.on('open', () => {
+        if(!isAdmin) {
+            document.getElementById('rxStatus').innerText = isStunEnabled 
+                ? `📡 オンライン（ID: ${currentMyID} で受信待機中...）` 
+                : `🔒 ローカル同期中（ID: ${currentMyID} / STUN: OFF）`;
+            document.getElementById('rxStatus').style.color = isStunEnabled ? "#50fa7b" : "#58a6ff";
+        }
+    });
+
+    peer.on('connection', (conn) => {
+        conn.on('data', (data) => { processIncomingData(data); });
+    });
+    peer.on('error', (err) => { console.log("PeerJS Error: ", err); });
+}
+
+function triggerAdminActivation() {
+    isAdmin = true;
+    for(let i=0; i<5; i++) {
+        myValues[i] = 'O'; 
+        const d = document.getElementById(`myDial${i}`);
+        d.querySelector('.dial-value').innerText = (i % 2 === 0) ? 'O' : 'o';
+        d.classList.add('admin-mode');
+    }
+    window.history.replaceState({}, document.title, window.location.pathname);
+    document.getElementById('rxStatus').innerText = "🛑 管理者回線：傍受スタンバイ（オールグリーン）";
+    document.getElementById('rxStatus').style.color = "#ff3366";
+    toggleAdminUI(true);
+    updateDialVisuals();
+}
+
+function toggleStunServer() {
+    const checkbox = document.getElementById('stunToggle');
+    const label = document.getElementById('stunStatusLabel');
+    isStunEnabled = checkbox.checked;
+    label.innerText = isStunEnabled ? "STUNサーバー: ON" : "STUNサーバー: OFF";
+    label.style.color = isStunEnabled ? "#50fa7b" : "#ff5555";
+    initPeerConnection();
+}
+
+const localBus = new BroadcastChannel('morse_admin_channel');
+const DIAL_CHARS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
+let targetValues = ['1', '1', '1', '1', '1'];
+
+let activeTargetDialIndex = 0;
+let activeMyDialIndex = 0;
+
+let audioCtx = null; let oscillator = null; let gainNode = null;
+let enterPressed = false; let keyDownTime = 0;
+let isCheckingPassword = false;
+
+localBus.onmessage = (event) => {
+    const data = event.data;
+    if (!data) return;
+    const currentMyID = getMyIDString();
+    if (isAdmin || targetValues.join('') === "OoOoO" || currentMyID === "OoOoO") {
+        if (data.isIntercept) processIncomingData(data);
+    } else {
+        if (!data.isIntercept && data.to === currentMyID) processIncomingData(data);
+    }
+};
+
+function processIncomingData(data) {
+    if (!data || !data.morse) return;
+    let translatedText = "";
+    const currentMyID = getMyIDString();
+    
+    if (data.isIntercept || isAdmin || targetValues.join('') === "OoOoO" || currentMyID === "OoOoO") {
+        translatedText = data.morse; 
+    } else {
+        let tokens = data.morse.split(' ');
+        let tempText = [];
+        for (let token of tokens) {
+            if (token === "") { tempText.push(" "); }
+            else if (REVERSE_MORSE_MAP[token]) { tempText.push(REVERSE_MORSE_MAP[token]); }
+            else { tempText.push(token); }
+        }
+        translatedText = tempText.join('').replace(/\s+/g, ' ').trim();
+        if(translatedText === "") translatedText = "---";
+    }
+
+    const rxBox = document.getElementById('rxBox');
+    if (data.isIntercept || isAdmin || targetValues.join('') === "OoOoO" || currentMyID === "OoOoO") {
+        rxBox.classList.add('admin-intercept');
+        setTimeout(() => rxBox.classList.remove('admin-intercept'), 1500);
+        document.getElementById('rxTitle').innerText = "⚡ [管理者広域傍受モニター - INTERCEPT]";
+        document.getElementById('rxStatus').innerText = `🕵️ 通信検知 -> [ID: ${data.from}] から [ID: ${data.to}] への暗号`;
+        document.getElementById('rxStatus').style.color = "#ff3366";
+        addLogToTable(data.from, data.to, translatedText, data.morse);
+    } else if (data.to === currentMyID) {
+        rxBox.classList.add('receiving');
+        setTimeout(() => rxBox.classList.remove('receiving'), 1000);
+        document.getElementById('rxTitle').innerText = "[受信モニター - RECEIVER]";
+        document.getElementById('rxStatus').innerText = `🎵 ID:${data.from} からの新着シグナル！`;
+        document.getElementById('rxStatus').style.color = "#50fa7b";
+    }
+    
+    if (data.to === currentMyID || data.isIntercept || isAdmin || targetValues.join('') === "OoOoO" || currentMyID === "OoOoO") {
+        document.getElementById('rxRawMorse').innerText = `受信データ: ${data.morse}`;
+        document.getElementById('rxMessage').innerText = translatedText;
+        playIncomingBeep(data.isIntercept || isAdmin || targetValues.join('') === "OoOoO" || currentMyID === "OoOoO");
+    }
+}
+
+function addLogToTable(from, to, text, morse) {
+    const tbody = document.getElementById('adminLogBody');
+    if (tbody.firstChild) {
+        const lastText = tbody.firstChild.innerHTML;
+        if (lastText.includes(`${from} ➔ ${to}`) && lastText.includes(morse)) return;
+    }
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><span class="tag-route">${from} ➔ ${to}</span></td><td><strong style="color: #fff; font-size:13px; letter-spacing:1px;">${text}</strong><br><span style="color:#8b949e; font-size:11px;">${morse}</span></td>`;
+    tbody.insertBefore(tr, tbody.firstChild);
+}
+
+function toggleAdminUI(show) {
+    const body = document.body;
+    const adminPanel = document.getElementById('adminPanel');
+    if (show) { body.classList.add('admin-layout'); adminPanel.classList.add('show'); } 
+    else { body.classList.remove('admin-layout'); adminPanel.classList.remove('show'); }
+}
+
+function selectTargetDial(index) {
+    if (targetValues.join('') === "OoOoO") return;
+    activeTargetDialIndex = index;
+    for(let i=0; i<5; i++) document.getElementById(`dial${i}`).classList.remove('focused');
+    document.getElementById(`dial${activeTargetDialIndex}`).classList.add('focused');
+}
+function selectMyDial(index) {
+    if (isAdmin) return;
+    activeMyDialIndex = index;
+    for(let i=0; i<5; i++) document.getElementById(`myDial${i}`).classList.remove('focused');
+    document.getElementById(`myDial${activeMyDialIndex}`).classList.add('focused');
+}
+selectTargetDial(0);
+selectMyDial(0);
+
+
+// ========================================================
+// 🔐 【NEW】金庫ダイヤル式 360度円形角度計算ローテーションエンジン
+// ========================================================
+function setupRotaryPhysics(dialId, isMyId, index) {
+    const dial = document.getElementById(dialId);
+    let isDragging = false;
+    let startAngle = 0;
+    let baseAngle = 0;
+    let lastCharIndex = -1;
+
+    function getCenter() {
+        const rect = dial.getBoundingClientRect();
+        return {
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2
+        };
+    }
+
+    function getAngle(clientX, clientY) {
+        const center = getCenter();
+        const dx = clientX - center.x;
+        const dy = clientY - center.y;
+        // 北（12時方向）を基準(0度)に時計回りの角度(0〜360)を計算
+        let angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
+        if (angle < 0) angle += 360;
+        return angle;
+    }
+
+    function syncInitialAngle() {
+        const val = isMyId ? myValues[index] : targetValues[index];
+        let idx = DIAL_CHARS.indexOf(val === 'O' || val === 'o' ? '0' : val);
+        if (idx < 0) idx = 0;
+        baseAngle = idx * 36.0; 
+        dial.style.transform = `rotate(${baseAngle}deg)`;
+        lastCharIndex = idx;
+    }
+
+    // 初回読み込み時の角度同期
+    setTimeout(syncInitialAngle, 50);
+
+    function handleStart(clientX, clientY) {
+        if (isCheckingPassword || (isMyId && isAdmin)) return;
+        if (isMyId) selectMyDial(index); else selectTargetDial(index);
+        
+        isDragging = true;
+        startAngle = getAngle(clientX, clientY);
+        
+        // 現在のCSS回転値からベース角度を取得
+        const style = window.getComputedStyle(dial);
+        const transform = style.getPropertyValue('transform');
+        if (transform && transform !== 'none') {
+            const values = transform.split('(')[1].split(')')[0].split(',');
+            const a = values[0]; const b = values[1];
+            baseAngle = Math.round(Math.atan2(b, a) * (180 / Math.PI));
+            if (baseAngle < 0) baseAngle += 360;
+        }
+        document.body.style.cursor = 'crosshair';
+    }
+
+    function handleMove(clientX, clientY) {
+        if (!isDragging || isCheckingPassword) return;
+        
+        const currentAngle = getAngle(clientX, clientY);
+        let delta = currentAngle - startAngle;
+        
+        // 360度の境界をまたぐ時の補正
+        if (delta > 180) delta -= 360;
+        if (delta < -180) delta += 360;
+        
+        let targetRotation = (baseAngle + delta) % 360;
+        if (targetRotation < 0) targetRotation += 360;
+        
+        dial.style.transform = `rotate(${targetRotation}deg)`;
+        
+        // 1周360度を10等分(1文字36度)して現在の文字インデックスを特定
+        let charIndex = Math.round(targetRotation / 36.0) % 10;
+        if (charIndex < 0) charIndex += 10;
+        
+        const newChar = DIAL_CHARS[charIndex];
+        const oldChar = isMyId ? myValues[index] : targetValues[index];
+        
+        if (newChar !== oldChar && (oldChar !== 'O' && oldChar !== 'o')) {
+            if (isMyId) {
+                myValues[index] = newChar;
+            } else {
+                targetValues[index] = newChar;
+            }
+            dial.querySelector('.dial-value').innerText = newChar;
+            
+            if (charIndex !== lastCharIndex) {
+                playClickSound();
+                lastCharIndex = charIndex;
+            }
+            updateDialVisuals();
+        }
+    }
+
+    function handleEnd() {
+        if (!isDragging) return;
+        isDragging = false;
+        document.body.style.cursor = 'default';
+        // 指やマウスを離した時に、最も近い目盛り(36度単位)にカチッとスナップさせる
+        syncInitialAngle();
+    }
+
+    dial.addEventListener('mousedown', (e) => { e.preventDefault(); handleStart(e.clientX, e.clientY); });
+    window.addEventListener('mousemove', (e) => { handleMove(e.clientX, e.clientY); });
+    window.addEventListener('mouseup', handleEnd);
+    
+    dial.addEventListener('touchstart', (e) => { handleStart(e.touches[0].clientX, e.touches[0].clientY); }, { passive: true });
+    window.addEventListener('touchmove', (e) => { handleMove(e.touches[0].clientX, e.touches[0].clientY); }, { passive: true });
+    window.addEventListener('touchend', handleEnd);
+
+    // マウスホイールでのカチカチ回転も金庫感を出すためにサポート
+    dial.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        if (isCheckingPassword || (isMyId && isAdmin)) return;
+        if (isMyId) selectMyDial(index); else selectTargetDial(index);
+        
+        let direction = e.deltaY > 0 ? 1 : -1;
+        let curVal = isMyId ? myValues[index] : targetValues[index];
+        if (curVal === 'O' || curVal === 'o') curVal = '0';
+        let idx = DIAL_CHARS.indexOf(curVal);
+        let nextIdx = (idx + direction + 10) % 10;
+        
+        if (isMyId) myValues[index] = DIAL_CHARS[nextIdx];
+        else targetValues[index] = DIAL_CHARS[nextIdx];
+        
+        dial.querySelector('.dial-value').innerText = DIAL_CHARS[nextIdx];
+        playClickSound();
+        syncInitialAngle();
+        updateDialVisuals();
+    }, { passive: false });
+}
+
+// 10個の全金庫ダイヤルに回転物理エンジンをバインド
+for(let i=0; i<5; i++) {
+    setupRotaryPhysics(`dial${i}`, false, i);
+    setupRotaryPhysics(`myDial${i}`, true, i);
+}
+
+// キーボード連動（TabキーによるO/oシークレットハック）
+window.addEventListener('keydown', (e) => {
+    if (isCheckingPassword) return;
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        const isTargetFocus = document.getElementById(`dial${activeTargetDialIndex}`).classList.contains('focused');
+        if (isTargetFocus) {
+            if (targetValues.join('') === "OoOoO") return;
+            const activeDial = document.getElementById(`dial${activeTargetDialIndex}`);
+            let cv = targetValues[activeTargetDialIndex];
+            if (cv === '0' || cv === 'O' || cv === 'o') {
+                if (cv === '0') targetValues[activeTargetDialIndex] = 'O';
+                else if (cv === 'O') targetValues[activeTargetDialIndex] = 'o';
+                else if (cv === 'o') targetValues[activeTargetDialIndex] = '0';
+                activeDial.querySelector('.dial-value').innerText = targetValues[activeTargetDialIndex];
+                playClickSound(); updateDialVisuals();
+            }
+        } else {
+            if (isAdmin) return;
+            const activeMyDial = document.getElementById(`myDial${activeMyDialIndex}`);
+            let cv = myValues[activeMyDialIndex];
+            if (cv === '0' || cv === 'O' || cv === 'o') {
+                if (cv === '0') myValues[activeMyDialIndex] = 'O';
+                else if (cv === 'O') myValues[activeMyDialIndex] = 'o';
+                else if (cv === 'o') myValues[activeMyDialIndex] = '0';
+                activeMyDial.querySelector('.dial-value').innerText = myValues[activeMyDialIndex];
+                playClickSound(); updateDialVisuals();
+            }
+        }
+        return;
+    }
+    if (targetValues.join('') === "OoOoO" || getMyIDString() === "OoOoO") return; 
+    if (e.code === 'Enter') {
+        e.preventDefault(); if (enterPressed) return;
+        enterPressed = true; keyDownTime = Date.now();
+        document.getElementById('keyPad').classList.add('active'); startTone();
+    }
+});
+
+let hasPrompted = false;
+
+function updateDialVisuals() {
+    const targetID = targetValues.join('');
+    const currentMyID = getMyIDString();
+    const log = document.getElementById('statusLog');
+    const btnSend = document.getElementById('btnSend');
+    const keyPad = document.getElementById('keyPad');
+    const stream = document.getElementById('signalStream');
+    
+    if (targetID === "OoOoO" || currentMyID === "OoOoO") {
+        if (!hasPrompted && !isAdmin && !isCheckingPassword) {
+            isCheckingPassword = true;
+            hasPrompted = true; 
+            
+            setTimeout(async () => {
+                const pass = prompt("🔒 OVERRIDE DETECTED\n【セキュア・仮想サーバー認証モード】\n管理者確認用コードを入力してサーバーに送信してください:");
+                if (pass !== null) {
+                    const response = await VirtualAuthServer.postAuthRequest(pass);
+                    if (response.status === 200) {
+                        triggerAdminActivation();
+                        isCheckingPassword = false;
+                        updateDialVisuals();
+                    } else {
+                        alert(`認証失敗 (${response.status}): ${response.message}`);
+                        resetToSafeState();
+                    }
+                } else {
+                    resetToSafeState();
+                }
+            }, 100);
+        }
+
+        if (isAdmin) {
+            btnSend.disabled = true; btnSend.innerText = "送信不可 (VIEW ONLY)";
+            keyPad.classList.add('disabled'); keyPad.innerText = "🛑 管理者モード：送信機能はロックされています";
+            stream.classList.add('disabled'); clearBuffer();
+            toggleAdminUI(true); 
+        }
+    } else {
+        hasPrompted = false;
+        isCheckingPassword = false;
+        btnSend.disabled = false; btnSend.innerText = "更新送信 (UPDATE)";
+        keyPad.classList.remove('disabled'); keyPad.innerText = "ENTER KEY (電鍵)";
+        stream.classList.remove('disabled');
+        if (!isAdmin) toggleAdminUI(false); 
+    }
+
+    for(let i=0; i<5; i++) {
+        const dial = document.getElementById(`dial${i}`);
+        dial.classList.remove('matched', 'admin-matched');
+        if (targetID === "OoOoO") { dial.classList.add('admin-matched'); } 
+        else if (targetValues[i] === 'O' || targetValues[i] === 'o') { dial.classList.add('admin-matched'); } 
+        else if (targetID !== "11111") { dial.classList.add('matched'); }
+    }
+
+    if (!isAdmin) {
+        for(let i=0; i<5; i++) {
+            const dial = document.getElementById(`myDial${i}`);
+            dial.classList.remove('admin-mode');
+            if (myValues[i] === 'O' || myValues[i] === 'o') { dial.classList.add('admin-mode'); }
+        }
+        staticMyIdCheckAndRefresh();
+    }
+
+    if (targetID === "OoOoO" || currentMyID === "OoOoO") {
+        log.style.color = "#ff3366"; log.innerText = isAdmin ? `⚠️ OVERRIDE SUCCESS: パッシブ・ログテーブル展開。全交信を自動記録します。` : `🔒 サーバー認証通信中...`;
+    } else {
+        log.style.color = "#ffaa00"; log.innerText = `📡 現在の設定ID: [ ${targetID} ] に追従中...`;
+    }
+}
+
+let lastInitializedMyId = "";
+function staticMyIdCheckAndRefresh() {
+    const current = getMyIDString();
+    if(current !== lastInitializedMyId && current.length === 5 && !current.includes('O') && !current.includes('o')) {
+        lastInitializedMyId = current;
+        initPeerConnection();
+    }
+}
+
+function resetToSafeState() {
+    hasPrompted = false;
+    isCheckingPassword = false;
+    targetValues = ['1', '1', '1', '1', '1'];
+    myValues = ['5', '5', '5', '5', '5'];
+    for(let i=0; i<5; i++) {
+        document.getElementById(`dial${i}`).querySelector('.dial-value').innerText = '1';
+        document.getElementById(`myDial${i}`).querySelector('.dial-value').innerText = '5';
+        document.getElementById(`dial${i}`).style.transform = 'rotate(0deg)';
+        document.getElementById(`myDial${i}`).style.transform = 'rotate(144deg)'; // 5は144度
+    }
+    updateDialVisuals();
+}
+
+function playClickSound() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+    osc.type = 'triangle'; osc.frequency.setValueAtTime(160, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.02, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.02);
+    osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + 0.02);
+}
+
+function playIncomingBeep(isIntercept) {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+    osc.type = 'sine'; osc.frequency.setValueAtTime(isIntercept ? 350 : 600, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
+    osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + 0.4);
+}
+
+function startTone() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    oscillator = audioCtx.createOscillator(); gainNode = audioCtx.createGain();
+    oscillator.type = 'sine'; oscillator.frequency.setValueAtTime(800, audioCtx.currentTime); 
+    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+    oscillator.connect(gainNode); gainNode.connect(audioCtx.destination); oscillator.start();
+}
+function stopTone() { if (oscillator) { oscillator.stop(); oscillator.disconnect(); oscillator = null; } }
+
+window.addEventListener('keyup', (e) => {
+    if (targetValues.join('') === "OoOoO" || getMyIDString() === "OoOoO" || isCheckingPassword) return;
+    const txStream = document.getElementById('signalStream');
+    if (e.code === 'Enter') {
+        if (!enterPressed) return; enterPressed = false;
+        document.getElementById('keyPad').classList.remove('active'); stopTone();
+        const duration = Date.now() - keyDownTime;
+        txStream.innerText += (duration < 180) ? "." : "-";
+    } else {
+        if (e.key !== 'Tab') {
+            if (txStream.innerText.length > 0 && !txStream.innerText.endsWith(' ')) txStream.innerText += ' ';
+        }
+    }
+});
+
+function clearBuffer() { document.getElementById('signalStream').innerText = ""; }
+
+function transmitMessage() {
+    const txStream = document.getElementById('signalStream');
+    const rawMorse = txStream.innerText.trim();
+    const targetID = targetValues.join('');
+    const currentMyID = getMyIDString();
+    if (rawMorse.length === 0 || targetID === "11111" || targetID === "OoOoO" || currentMyID === "OoOoO" || isCheckingPassword) return;
+
+    const packetNormal = { from: currentMyID, to: targetID, morse: rawMorse, isIntercept: false };
+    const packetIntercept = { from: currentMyID, to: targetID, morse: rawMorse, isIntercept: true };
+
+    localBus.postMessage(packetNormal);
+    localBus.postMessage(packetIntercept);
+
+    if (peer && !peer.destroyed) {
+        const conn = peer.connect(`morse-id-${targetID}`);
+        conn.on('open', () => {
+            conn.send(packetNormal);
+            document.getElementById('statusLog').style.color = "#00ffcc";
+            document.getElementById('statusLog').innerText = `⚡ 送信完了: ID:${targetID} への暗号送出に成功しました。`;
+            clearBuffer();
+        });
+        conn.on('error', (err) => {
+            document.getElementById('statusLog').style.color = "#00ffcc";
+            document.getElementById('statusLog').innerText = `⚡ ローカル同期完了: 暗号が傍受ログおよび対象IDへ中継されました。`;
+            clearBuffer();
+        });
+
+        const adminConn = peer.connect(`morse-id-OoOoO`);
+        adminConn.on('open', () => { adminConn.send(packetIntercept); });
+        adminConn.on('error', () => {});
+    } else {
+        document.getElementById('statusLog').style.color = "#00ffcc";
+        document.getElementById('statusLog').innerText = `⚡ ローカル同期完了: 暗号が傍受ログおよび対象IDへ中継されました。`;
+        clearBuffer();
+    }
+}
+
+function convertTextToMorse() {
+    const textInput = document.getElementById('textInput');
+    const txStream = document.getElementById('signalStream');
+    if (!textInput || !txStream) return;
+    
+    let inputStr = textInput.value;
+    let resultBuffer = [];
+    let words = inputStr.split(/[\s　]+/);
+    
+    for (let w = 0; w < words.length; w++) {
+        let word = words[w];
+        if (word === "") continue;
+        let currentToken = "";
+        
+        for (let i = 0; i < word.length; i++) {
+            let char = word[i];
+            let upperChar = char.toUpperCase();
+            let code = word.charCodeAt(i);
+            if (code >= 0xD800 && code <= 0xDBFF && i + 1 < word.length) {
+                char += word[i+1]; i++; upperChar = char;
+            }
+            
+            if (MORSE_MAP[upperChar]) {
+                if (currentToken !== "") { resultBuffer.push(currentToken); currentToken = ""; }
+                resultBuffer.push(MORSE_MAP[upperChar]);
+            } else {
+                currentToken += char;
+            }
+        }
+        if (currentToken !== "") { resultBuffer.push(currentToken); }
+        if (w < words.length - 1) { resultBuffer.push(""); }
+    }
+    txStream.innerText = resultBuffer.join(' ') + ' ';
+}
+
+lastInitializedMyId = getMyIDString();
+updateDialVisuals();
+</script>
+
+</body>
+</html>
